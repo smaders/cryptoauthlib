@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <drivers/i2c.h>
+#include <zephyr/drivers/i2c.h>
 
 #include "hal/atca_hal.h"
 
@@ -46,7 +46,7 @@ static ATCA_STATUS hal_zephyr_i2c_configure(
     const uint32_t          speed            /**< baud rate (typically 100000 or 400000) */
 )
 {
-    uint32_t i2c_cfg = I2C_MODE_MASTER | I2C_SPEED_SET(hal_zephyr_i2c_convert_speed(speed));
+    uint32_t i2c_cfg = I2C_MODE_CONTROLLER | I2C_SPEED_SET(hal_zephyr_i2c_convert_speed(speed));
 
     if (i2c_configure(zdev, i2c_cfg)) 
     {
@@ -78,6 +78,10 @@ ATCA_STATUS hal_i2c_init(ATCAIface iface, ATCAIfaceCfg* cfg)
         if (!iface->hal_data)
         {
             const struct device * zdev = device_get_binding(cfg->cfg_data);
+            if(!device_is_ready(zdev))
+            {
+                return ATCA_GEN_FAIL;
+            }
 
             if (ATCA_SUCCESS == (status = hal_zephyr_i2c_configure(zdev, cfg->atcai2c.baud)))
             {
@@ -111,20 +115,25 @@ ATCA_STATUS hal_i2c_post_init(ATCAIface iface)
  * \return ATCA_SUCCESS on success, otherwise an error code.
  */
 
-ATCA_STATUS hal_i2c_send(ATCAIface iface, uint8_t address, uint8_t *txdata, int txlength)
+ATCA_STATUS hal_i2c_send(ATCAIface iface, uint8_t word_address, uint8_t *txdata, int txlength)
 {
     struct device * zdev = (struct device *)atgetifacehaldat(iface);
+    uint8_t dev_addr = atgetifacecfg(iface)->atcai2c.address;
 
-    if (!zdev || (0 == txlength) || (NULL == txdata))
-    {
+    if (!zdev || ((txlength > 0) && (NULL == txdata))) {
         return ATCA_BAD_PARAM;
     }
-    if (i2c_write(zdev, txdata, txlength, (address >> 0x1)))
-    {
+    if (0 == txlength) {
+        if (i2c_write(zdev, &word_address, 1, dev_addr >> 1U)) {
+            return ATCA_TX_FAIL;
+        } else {
+            return ATCA_SUCCESS;
+        }
+    } else if (i2c_burst_write(zdev, dev_addr >> 1U, word_address, txdata, txlength)) {
         return ATCA_TX_FAIL;
+    } else {
+        return ATCA_SUCCESS;
     }
-     
-    return ATCA_SUCCESS;
 }
 
 /** \brief HAL implementation of I2C receive function
